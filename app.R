@@ -8,8 +8,6 @@ library(dplyr)
 library(tidyverse)
 library(ggrepel)
 
-pbp_data <- load_pbp(2025)
-
 ui <- dashboardPage(
   dashboardHeader(title = "NFL Data Shiny", disable = FALSE),
   dashboardSidebar(
@@ -93,7 +91,7 @@ ui <- dashboardPage(
               numericInput(
                 inputId = "rbXfp_lastNWeeks",
                 label = "Last N Weeks",
-                value = max(pbp_data$week),
+                value = 1,
                 min = 1,
                 max = 17
               ),
@@ -135,7 +133,7 @@ ui <- dashboardPage(
               numericInput(
                 inputId = "wrXfp_lastNWeeks",
                 label = "Last N Weeks",
-                value = max(pbp_data$week),
+                value = 1,
                 min = 1,
                 max = 17
               ),
@@ -177,7 +175,7 @@ ui <- dashboardPage(
               numericInput(
                 inputId = "rushDef_lastNWeeks",
                 label = "Last N Weeks",
-                value = max(pbp_data$week),
+                value = 1,
                 min = 1,
                 max = 17
               ),
@@ -213,7 +211,7 @@ ui <- dashboardPage(
               numericInput(
                 inputId = "recDef_lastNWeeks",
                 label = "Last N Weeks",
-                value = max(pbp_data$week),
+                value = 1,
                 min = 1,
                 max = 17
               ),
@@ -243,35 +241,59 @@ ui <- dashboardPage(
 )
 
 server <- function(input, output, session) {
+  pbp_data <- reactiveVal(NULL)
+  
+  observeEvent(pbp_data(), {
+    req(pbp_data())
+    curr_week <- max(pbp_data()$week, na.rm = TRUE)
+    
+    updateNumericInput(session, "rbXfp_lastNWeeks", value = curr_week, max = curr_week)
+    updateNumericInput(session, "wrXfp_lastNWeeks", value = curr_week, max = curr_week)
+    updateNumericInput(session, "rushDef_lastNWeeks", value = curr_week, max = curr_week)
+    updateNumericInput(session, "recDef_lastNWeeks", value = curr_week, max = curr_week)
+  })
+  
+  observeEvent(TRUE,{ 
+    pbp_data(load_pbp(2025)) 
+  })
+  
+  teams <- reactive({
+    req(pbp_data())
+    load_teams()
+  })
+  
+  pbp_off <- reactive({
+    req(pbp_data(), teams())
+    pbp_data() %>% left_join(teams(), by = c('posteam' = 'team_abbr'))
+  })
+  
+  pbp_def <- reactive({
+    req(pbp_data(), teams())
+    pbp_data() %>% left_join(teams(), by = c('defteam' = 'team_abbr'))
+  })
+  
+  expected_fantasy_points <- reactive({
+    req(teams())
+    load_ff_opportunity(most_recent_season(), "weekly", "latest") %>%
+      left_join(teams(), by = c('posteam' = 'team_abbr'))
+  })
+  
   observeEvent(input$tabs, {
     if(input$tabs == "paceOfPlayTab") {
-      serverPaceOfPlay(input, output, session)
+      serverPaceOfPlay(input, output, session, pbp_off())
     } else if(input$tabs == "rbXfpTab") {
-      serverRbXfp(input, output, session)
+      serverRbXfp(input, output, session, pbp_data(), expected_fantasy_points())
     } else if(input$tabs == "wrXfpTab"){
-      serverWrXfp(input, output, session)
+      serverWrXfp(input, output, session, pbp_data(), expected_fantasy_points())
     } else if(input$tabs == "rushDefenseTab") {
-      serverRushDef(input, output, session)
+      serverRushDef(input, output, session, pbp_def())
     } else if(input$tabs == "receivingDefenseTab") {
-      serverRecDef(input, output, session)
+      serverRecDef(input, output, session, pbp_def())
     }
   })
 }
 
-
-
-teams <- load_teams()
-
-pbp_off <- pbp_data %>% 
-  left_join(teams, by = c('posteam' = 'team_abbr'))
-
-pbp_def <- pbp_data %>% 
-  left_join(teams, by = c('defteam' = 'team_abbr'))
-
-expected_fantasy_points <- load_ff_opportunity(most_recent_season(), "weekly", "latest") %>% 
-  left_join(teams, by = c('posteam' = 'team_abbr'))
-
-serverPaceOfPlay <- function(input, output, session) {
+serverPaceOfPlay <- function(input, output, session, pbp_off) {
   neutralScriptPace <- pbp_off %>% 
     filter(wp > 0.2 & wp < 0.8 & down <= 3 & qtr <= 4 & half_seconds_remaining > 120) %>% 
     group_by(posteam) %>% 
@@ -303,7 +325,7 @@ serverPaceOfPlay <- function(input, output, session) {
   })
 }
 
-serverRbXfp <- function(input, output, session) {
+serverRbXfp <- function(input, output, session, pbp_data, expected_fantasy_points) {
   
   plot_data <- eventReactive(input$rbXfp_updatePlot, {
     currWeek <- max(pbp_data$week)
@@ -369,7 +391,7 @@ serverRbXfp <- function(input, output, session) {
   })
 }
 
-serverWrXfp <- function(input, output, session) {
+serverWrXfp <- function(input, output, session, pbp_data, expected_fantasy_points) {
   
   plot_data <- eventReactive(input$wrXfp_updatePlot, {
     currWeek <- max(pbp_data$week)
@@ -436,7 +458,7 @@ serverWrXfp <- function(input, output, session) {
   })
 }
 
-makeHalfPprData <- function() {
+makeHalfPprData <- function(pbp_def) {
   rem_NA <- pbp_def %>% 
     mutate_at(c('rushing_yards', 'receiving_yards', 'complete_pass',
                 'pass_touchdown', 'rush_touchdown', 'fumble_lost'), ~replace_na(.,0))
@@ -448,7 +470,7 @@ makeHalfPprData <- function() {
   return(pbp_data_half_ppr)
 }
 
-serverRushDef <- function(input, output, session) {
+serverRushDef <- function(input, output, session, pbp_def) {
   
   plot_data <- eventReactive(input$rushDef_updatePlot, {
     currWeek <- max(pbp_data$week)
@@ -456,7 +478,7 @@ serverRushDef <- function(input, output, session) {
     
     minWeek <- ifelse(currWeek - lastNWeeks < 1, 1, (currWeek - lastNWeeks) + 1)
     
-    pbp_data_halfppr <- makeHalfPprData()
+    pbp_data_halfppr <- makeHalfPprData(pbp_def)
     
     res_data <- pbp_data_halfppr %>% 
       filter(qtr <= 4 & down <= 4 & play_type == 'run' & rush == 1 & week >= minWeek) %>% 
@@ -500,7 +522,7 @@ serverRushDef <- function(input, output, session) {
   })
 }
 
-serverRecDef <- function(input, output, session) {
+serverRecDef <- function(input, output, session, pbp_def) {
   
   plot_data <- eventReactive(input$recDef_updatePlot, {
     currWeek <- max(pbp_data$week)
@@ -508,7 +530,7 @@ serverRecDef <- function(input, output, session) {
     
     minWeek <- ifelse(currWeek - lastNWeeks < 1, 1, (currWeek - lastNWeeks) + 1)
     
-    pbp_data_halfppr <- makeHalfPprData()
+    pbp_data_halfppr <- makeHalfPprData(pbp_def)
     
     res_data <- pbp_data_halfppr %>% 
       filter(qtr <= 4 & down <= 4 & play_type == 'pass' & pass == 1 & week >= minWeek) %>% 

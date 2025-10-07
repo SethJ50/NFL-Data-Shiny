@@ -1,0 +1,10 @@
+name: nfl_data_shiny
+title:
+username: sethj50
+account: sethj50
+server: shinyapps.io
+hostUrl: https://api.shinyapps.io/v1
+appId: 15654511
+bundleId: 10990257
+url: https://sethj50.shinyapps.io/nfl_data_shiny/
+version: 1
